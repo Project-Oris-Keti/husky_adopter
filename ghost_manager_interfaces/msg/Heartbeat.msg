@@ -1,0 +1,14 @@
+uint8 estop
+uint8 control_mode
+uint8 action
+uint8 planner_en
+uint8 planner_cmd
+uint8 high_step
+uint8 blind_stairs
+uint8 run
+uint8 dock
+uint8 recovery
+uint8 roll_over
+uint8 hill
+uint8 sand
+uint8 soft_estop
