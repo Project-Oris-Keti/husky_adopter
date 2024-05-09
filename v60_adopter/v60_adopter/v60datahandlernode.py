@@ -189,13 +189,13 @@ class V60DataHanderNode(Node):
         self.pub.publish(ros_msg)
                         
         # estop, planner_en, high_step, blind_stairs, run, dock, roll_over, hill, sand, soft_estop
-        info_pack = f'000000{heartbeat.estop}{heartbeat.vision_mode}{heartbeat.high_step}{heartbeat.blind_stairs}{heartbeat.run}{heartbeat.dock}{heartbeat.roll_over}{heartbeat.hill}{heartbeat.sand}{heartbeat.soft_estop}'
+        info_pack = f'000000{heartbeat.estop}{heartbeat.si_units}{heartbeat.high_step}{heartbeat.blind_stairs}{heartbeat.run}{heartbeat.dock}{heartbeat.roll_over}{heartbeat.hill}{heartbeat.sand}{heartbeat.soft_estop}'
         #print(info_pack)
 
         # publish SYS_STATUS
         mavlink = mav.MAVLink(None,self.target_system,self.target_component)        
         # sys_status_encode(self, onboard_control_sensors_present: int, onboard_control_sensors_enabled: int, onboard_control_sensors_health: int, load: int, voltage_battery: int, current_battery: int, battery_remaining: int, drop_rate_comm: int, errors_comm: int, errors_count1: int, errors_count2: int, errors_count3: int, errors_count4: int)
-        mav_msg = mavlink.sys_status_encode(0,0,0,int(info_pack,2),self.voltage,heartbeat.planner_cmd,self.percentage,heartbeat.control_mode,0,0,0,0,0)
+        mav_msg = mavlink.sys_status_encode(0,0,0,int(info_pack,2),self.voltage,heartbeat.vision_mode,self.percentage,heartbeat.control_mode,0,0,0,0,0)
         mav_msg.pack(mavlink)
         #print(mav_msg.to_dict())
         ros_msg = convert_to_rosmsg(mav_msg)
