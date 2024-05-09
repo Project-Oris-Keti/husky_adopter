@@ -352,7 +352,7 @@ class GCSDataHanderNode(Node):
             elif self.control_mode == 180:
                 if mavlink_message_dict['chan6_raw'] > 1800:
                     self.ensure_mode_node.ensure_mode('control_mode', 170)
-                    self.control_mode = 180
+                    self.control_mode = 170
 
 class EnsureModeNode(Node):
     def __init__(self):
