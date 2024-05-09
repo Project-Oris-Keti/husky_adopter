@@ -189,7 +189,7 @@ class V60DataHanderNode(Node):
         self.pub.publish(ros_msg)
                         
         # estop, planner_en, high_step, blind_stairs, run, dock, roll_over, hill, sand, soft_estop
-        info_pack = f'000000{heartbeat.estop}{heartbeat.planner_en}{heartbeat.high_step}{heartbeat.blind_stairs}{heartbeat.run}{heartbeat.dock}{heartbeat.roll_over}{heartbeat.hill}{heartbeat.sand}{heartbeat.soft_estop}'
+        info_pack = f'000000{heartbeat.estop}{heartbeat.vision_mode}{heartbeat.high_step}{heartbeat.blind_stairs}{heartbeat.run}{heartbeat.dock}{heartbeat.roll_over}{heartbeat.hill}{heartbeat.sand}{heartbeat.soft_estop}'
         #print(info_pack)
 
         # publish SYS_STATUS
