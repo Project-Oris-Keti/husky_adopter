@@ -2,6 +2,7 @@ import time
 import message_filters
 import rclpy
 from rclpy.node import Node
+from std_msgs.msg import Float64
 from sensor_msgs.msg import Imu, NavSatFix, BatteryState
 import pymavlink.dialects.v20.standard as mav
 from mavros_msgs.msg import Mavlink
@@ -125,11 +126,17 @@ class V60DataHanderNode(Node):
         self.battery_sub = self.create_subscription(BatteryState, '/mcu/state/battery',self.get_battery_info,10)
         self.fixinfo_sub = self.create_subscription(GNSSFixInfo, '/gx5/gnss1/fixInfo',self.send_gps_raw_int,10)
         self.heartbeat_sub = self.create_subscription(Heartbeat, '/state/heartbeat',self.send_sys_status_and_heartbeat,10)        
+        self.compass_pub = self.create_subscription(Float64, '/gx5/compass',self.get_compass,10)
         
         self.pub = self.create_publisher(Mavlink, '/uas1/mavlink_sink', 10)
         
         self.voltage = 0
         self.percentage = 0
+        self.compass = 0.0
+
+    def get_compass(self, compass: Float64):
+        self.compass = compass.data/180.0*math.pi
+        #print(self.compass)
 
     def get_battery_info(self, battery: BatteryState):
         self.voltage = int(battery.voltage * 1000)
@@ -144,7 +151,9 @@ class V60DataHanderNode(Node):
             
         roll_x, pitch_y, yaw_z = euler_from_quaternion(imu.orientation.x, imu.orientation.y, imu.orientation.z, imu.orientation.w)        
         #print(yaw_z) 
-        yaw_z = ((yaw_z % (math.pi * 2)) + math.pi * 2) % (math.pi * 2)
+        #yaw_z = ((yaw_z % (math.pi * 2)) + math.pi * 2) % (math.pi * 2)
+        yaw_z = self.compass
+        #print(yaw_z)
 
         # publish ATTITUDE
         mavlink = mav.MAVLink(None,self.target_system,self.target_component)
@@ -161,7 +170,7 @@ class V60DataHanderNode(Node):
         # publish GPS_RAW_INT
         mavlink = mav.MAVLink(None,self.target_system,self.target_component)        
         # gps_raw_int_encode(self, time_usec: int, fix_type: int, lat: int, lon: int, alt: int, eph: int, epv: int, vel: int, cog: int, satellites_visible: int, alt_ellipsoid: int = 0, h_acc: int = 0, v_acc: int = 0, vel_acc: int = 0, hdg_acc: int = 0, yaw: int = 0)
-        mav_msg = mavlink.gps_raw_int_encode(0,0,0,0,0,0,0,0,0,0,num_sv)
+        mav_msg = mavlink.gps_raw_int_encode(0,0,0,0,0,0,0,0,0,num_sv)
         mav_msg.pack(mavlink)
         ros_msg = convert_to_rosmsg(mav_msg)
         
@@ -189,7 +198,7 @@ class V60DataHanderNode(Node):
         self.pub.publish(ros_msg)
                         
         # estop, planner_en, high_step, blind_stairs, run, dock, roll_over, hill, sand, soft_estop
-        info_pack = f'000000{heartbeat.estop}{heartbeat.si_units}{heartbeat.high_step}{heartbeat.blind_stairs}{heartbeat.run}{heartbeat.dock}{heartbeat.roll_over}{heartbeat.hill}{heartbeat.sand}{heartbeat.soft_estop}'
+        info_pack = f'000000{heartbeat.estop}{heartbeat.si_units}{heartbeat.high_step}{heartbeat.blind_stairs}{heartbeat.run}{heartbeat.dock}{heartbeat.recovery}{heartbeat.hill}{heartbeat.sand}{heartbeat.soft_estop}'
         #print(info_pack)
 
         # publish SYS_STATUS

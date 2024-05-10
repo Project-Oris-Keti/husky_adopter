@@ -171,7 +171,7 @@ class GCSDataHanderNode(Node):
 
     def heartbeat_monitor(self, heartbeat: Heartbeat):
         self.control_mode = heartbeat.control_mode    
-        self.planner_en = heartbeat.planner_en
+        self.planner_en = heartbeat.si_units
     
     def gcs_data_handler(self, mavros_data: Mavlink):
         mavlink = mav.MAVLink(None,self.target_system,self.target_component)
