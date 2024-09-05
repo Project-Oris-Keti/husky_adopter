@@ -1,7 +1,7 @@
 import rclpy
 from rclpy.node import Node
 import pymavlink.dialects.v20.standard as mav
-from std_msgs.msg import String
+from std_msgs.msg import String, UInt32
 from mavros_msgs.msg import Mavlink
 import struct
 import typing
@@ -18,6 +18,7 @@ import time
 import pysftp
 import os
 import socket
+
 
 def convert_to_payload64(
     payload_bytes: typing.Union[bytes, bytearray]
@@ -141,7 +142,7 @@ def convert_to_bytes(msg: Mavlink) -> bytearray:
 class GCSDataHanderNode(Node):
     def __init__(self, ensure_mode_node):
         super().__init__('GCSDataHandlerNode')
-        
+
         self.target_system = 1
         self.target_component = 1
         self.cur_mission_index = 0
@@ -152,15 +153,25 @@ class GCSDataHanderNode(Node):
         self.ghost_id = 'ghost'
         self.ghost_pwd = 'ghost'
         self.control_mode = 180
-        self.planner_en = 0
+        self.si_units = 0
         #self.mission_idx = 1
+        self.v60_move_mode = {
+            0: 'estop',
+            1: 'si_units',
+            2: 'high_step',
+            3: 'blind_stairs',
+            4: 'run',
+            5: 'dock',
+            6: 'hill',
+            7: 'sand'
+        }
 
         self.ensure_mode_node = ensure_mode_node
-        
+
         self.mavlink_sub = self.create_subscription(Mavlink, '/uas1/mavlink_source',self.gcs_data_handler,QoSProfile(
             reliability=QoSReliabilityPolicy.BEST_EFFORT,
             depth=10
-        ))
+            ))
         self.heartbeat_sub = self.create_subscription(Heartbeat, '/state/heartbeat',self.heartbeat_monitor,10)
 
         self.mavlink_pub = self.create_publisher(Mavlink, '/uas1/mavlink_sink', 10)
@@ -168,10 +179,15 @@ class GCSDataHanderNode(Node):
         self.v60_twist_pub = self.create_publisher(Twist, '/mcu/command/manual_twist', 10)
 
         self.v60_missionfile_pub = self.create_publisher(String, '/keti_gcs/mission',10)
+        #self.v60_vision_mode_pub = self.create_publisher(UInt32, '/command/setVisionMode',10)
+        
+        #self.v60_move_mode_pub = {}
+        #for idx in move_mode_topic:
+        #    self.v60_move_mode_pub[idx] = self.create_publisher(UInt32, move_mode_topic[idx],10)
 
     def heartbeat_monitor(self, heartbeat: Heartbeat):
         self.control_mode = heartbeat.control_mode    
-        self.planner_en = heartbeat.si_units
+        self.si_units = heartbeat.si_units
     
     def gcs_data_handler(self, mavros_data: Mavlink):
         mavlink = mav.MAVLink(None,self.target_system,self.target_component)
@@ -179,7 +195,7 @@ class GCSDataHanderNode(Node):
         
         mavlink_message_dict = mavlink_message.to_dict()
         id = mavlink_message.id
-        #print(mavlink_message_dict)
+        print(mavlink_message_dict)
         
         if id == mav.MAVLINK_MSG_ID_COMMAND_LONG:
             command = mavlink_message_dict['command']
@@ -200,6 +216,27 @@ class GCSDataHanderNode(Node):
                 mode = int(mavlink_message_dict['param1'])
                 # change control mode
                 self.ensure_mode_node.ensure_mode('control_mode', mode)
+            elif command == mav.MAV_CMD_USER_2:
+                mode = int(mavlink_message_dict['param1'])
+                value = int(mavlink_message_dict['param2'])
+                #data = UInt32()
+                #data.data = value
+
+                # change control mode
+                self.ensure_mode_node.ensure_mode('control_mode', 140)
+                self.ensure_mode_node.ensure_mode(self.v60_move_mode[mode], value)
+                #self.v60_move_mode_pub[mode].publish(data)
+                #time.sleep(0.5)
+                #self.ensure_mode_node.ensure_mode('control_mode', 180)
+            elif command == mav.MAV_CMD_USER_3:
+                mode = int(mavlink_message_dict['param1'])
+                #data = UInt32()
+                #data.data = mode
+                self.ensure_mode_node.ensure_mode('control_mode', 140)
+                self.ensure_mode_node.ensure_mode('vision_mode', mode)
+                #self.v60_vision_mode_pub.publish(data)     
+                #time.sleep(0.5)
+                #self.ensure_mode_node.ensure_mode('control_mode', 180)
 
         elif id == mav.MAVLINK_MSG_ID_MISSION_CLEAR_ALL:  
             # publish MISSION_ACK
@@ -207,8 +244,8 @@ class GCSDataHanderNode(Node):
             # mission_ack_encode(self, target_system: int, target_component: int, type: int, mission_type: int = 0)
             mav_msg = mavlink. mission_ack_encode(self.target_system, self.target_component, mav.MAV_MISSION_ACCEPTED, mav.MAV_MISSION_TYPE_MISSION)
             mav_msg.pack(mavlink)
+            self.mission_count = 0
             ros_msg = convert_to_rosmsg(mav_msg)
-            
             self.mavlink_pub.publish(ros_msg)
         elif id == mav.MAVLINK_MSG_ID_MISSION_COUNT:
             if self.mission_count == 0:
@@ -224,6 +261,7 @@ class GCSDataHanderNode(Node):
                 mav_msg.pack(mavlink)
                 ros_msg = convert_to_rosmsg(mav_msg)
                 
+                print('ok')
                 self.mavlink_pub.publish(ros_msg)
                 
         elif id == mav.MAVLINK_MSG_ID_MISSION_ITEM_INT:            
@@ -335,19 +373,29 @@ class GCSDataHanderNode(Node):
 
         elif id == mav.MAVLINK_MSG_ID_RC_CHANNELS_OVERRIDE:
             if self.control_mode == 170:
-                if self.planner_en != 0:
+                if self.si_units != 0:
                     #set blind move for relative twist
-                    self.ensure_mode_node.ensure_mode('planner_en', 0)
-                    self.planner_en =0
+                    self.ensure_mode_node.ensure_mode('si_units', 0)
+                    self.si_units = 0
 
+               # print(mavlink_message_dict)
                 max_val = 500.0
                 default_val = 1500
                 default_val_side = 1495
-                forward_normalized = float(mavlink_message_dict['chan3_raw'] - default_val) / max_val
+                scale = 1000.0
+                mid = 2000
+                #forward_normalized = float(mavlink_message_dict['chan3_raw'] - default_val) / max_val
+                forward_normalized = float(mavlink_message_dict['chan3_raw'] - mid) / scale
                 #left is positive value
-                side_normalized = -float(mavlink_message_dict['chan4_raw'] - default_val_side) / max_val
+                #side_normalized = -float(mavlink_message_dict['chan4_raw'] - default_val_side) / max_val
+                side_normalized = float(mavlink_message_dict['chan4_raw'] - mid) / scale
                 #left is positive value
-                yaw_normalized = -float(mavlink_message_dict['chan1_raw'] - default_val) / max_val
+                #yaw_normalized = -float(mavlink_message_dict['chan1_raw'] - default_val) / max_val
+                yaw_normalized = float(mavlink_message_dict['chan1_raw'] - mid) / scale
+                forward_normalized = 0.0 if abs(forward_normalized) <= 0.05 or abs(forward_normalized)> 1 else forward_normalized
+                side_normalized = 0.0 if abs(side_normalized) <= 0.05 or abs(side_normalized) > 1 else side_normalized
+                yaw_normalized = 0.0 if abs(yaw_normalized) <= 0.05 or abs(yaw_normalized) > 1 else yaw_normalized
+                print(forward_normalized, side_normalized, yaw_normalized)
                 self.v60_twist_pub.publish(Twist(linear=Vector3(x=forward_normalized, y=side_normalized), angular=Vector3(z=yaw_normalized)))
             elif self.control_mode == 180:
                 if mavlink_message_dict['chan6_raw'] > 1800:

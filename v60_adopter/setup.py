@@ -21,7 +21,7 @@ setup(
     entry_points={
         'console_scripts': [
             'v60datahandlernode = v60_adopter.v60datahandlernode:main',
-            'gcsdatahandlernode = v60_adopter.gcsdatahandlernode:main'
+            'gcsdatahandlernode = v60_adopter.gcsdatahandlernode:main',
         ],
     },
 )

@@ -3,7 +3,7 @@ import message_filters
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import Float64
-from sensor_msgs.msg import Imu, NavSatFix, BatteryState
+from sensor_msgs.msg import Imu, NavSatFix, BatteryState, JointState
 import pymavlink.dialects.v20.standard as mav
 from mavros_msgs.msg import Mavlink
 import math
@@ -19,6 +19,9 @@ from builtin_interfaces.msg import Time
 
 from ros2_mscl_interfaces.msg import GNSSFixInfo
 from ghost_manager_interfaces.msg import Heartbeat
+
+MAV_TYPE_ROBOTDOG = 100
+MAV_AUTOPILOT_KRMV60 = 100
 
 def convert_to_payload64(
     payload_bytes: typing.Union[bytes, bytearray]
@@ -127,12 +130,26 @@ class V60DataHanderNode(Node):
         self.fixinfo_sub = self.create_subscription(GNSSFixInfo, '/gx5/gnss1/fixInfo',self.send_gps_raw_int,10)
         self.heartbeat_sub = self.create_subscription(Heartbeat, '/state/heartbeat',self.send_sys_status_and_heartbeat,10)        
         self.compass_pub = self.create_subscription(Float64, '/gx5/compass',self.get_compass,10)
+        self.joint_sub = self.create_subscription(JointState, '/mcu/state/jointURDF', self.send_joint, 10)
         
         self.pub = self.create_publisher(Mavlink, '/uas1/mavlink_sink', 10)
         
         self.voltage = 0
         self.percentage = 0
         self.compass = 0.0
+
+    def send_joint(self, joint: JointState):
+        pos = joint.position
+        pos.append(0)
+        
+        mavlink = mav.MAVLink(None, self.target_system, self.target_component)
+        # control_system_state_encode(self, time_usec: int, x_acc: float, y_acc: float, z_acc: float, x_vel: float, y_vel: float, z_vel: float, x_pos: float, y_pos: float, z_pos: float, airspeed: float, vel_variance: Sequence[float], pos_variance: Sequence[float], q: Sequence[float], roll_rate: float, pitch_rate: float, yaw_rate: float)
+        #mav_msg = mavlink.control_system_state_encode(0, pos[0], pos[1], pos[2], pos[3], pos[4], pos[5], pos[6], pos[7], pos[8], pos[9], pos[10], pos[11], pos[12], pos[13], pos[14], 0)
+        mav_msg = mavlink.hil_actuator_controls_encode(0,pos,0,0)
+        mav_msg.pack(mavlink)
+        ros_msg = convert_to_rosmsg(mav_msg)
+
+        self.pub.publish(ros_msg)
 
     def get_compass(self, compass: Float64):
         self.compass = compass.data/180.0*math.pi
@@ -191,7 +208,7 @@ class V60DataHanderNode(Node):
         # publish HEARTBEAT
         mavlink = mav.MAVLink(None,self.target_system,self.target_component)
         # heartbeat_encode(self, type: int, autopilot: int, base_mode: int, custom_mode: int, system_status: int, mavlink_version: int = 3)        
-        mav_msg = mavlink.heartbeat_encode(mav.MAV_TYPE_QUADROTOR, mav.MAV_AUTOPILOT_ARDUPILOTMEGA, 0, mode, 0)
+        mav_msg = mavlink.heartbeat_encode(MAV_TYPE_ROBOTDOG, MAV_AUTOPILOT_KRMV60, 0, mode, 0)
         mav_msg.pack(mavlink)
         ros_msg = convert_to_rosmsg(mav_msg)
         
@@ -220,6 +237,10 @@ class V60DataHanderNode(Node):
         lat = int(gps.latitude * 10000000)
         lon = int(gps.longitude * 10000000)
         alt = int(gps.altitude * 1000)
+        #lat = int(39.74777264724913 * 10000000)
+        #lon = int(-105.00999763311616 * 10000000)
+        #alt = int(1000 * 1000)
+
         relative_alt = 0
         vx = 0
         vy = 0
