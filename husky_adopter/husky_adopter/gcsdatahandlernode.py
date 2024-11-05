@@ -9,138 +9,16 @@ import rclpy.time
 from pymavlink import mavutil
 from std_msgs.msg import Header
 from builtin_interfaces.msg import Time
-from ghost_manager_interfaces.srv import EnsureMode
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy
-import paramiko
-from ghost_manager_interfaces.msg import Heartbeat
 from geometry_msgs.msg import Vector3, Twist
 import time
-import pysftp
 import os
 import socket
 
-
-def convert_to_payload64(
-    payload_bytes: typing.Union[bytes, bytearray]
-) -> typing.List[int]:
-    """Convert payload bytes to Mavlink.payload64."""
-    payload_bytes = bytearray(payload_bytes)
-    payload_len = len(payload_bytes)
-    payload_octets = int(payload_len / 8)
-    if payload_len % 8 > 0:
-        payload_octets += 1
-        payload_bytes += b"\0" * (8 - payload_len % 8)
-
-    return struct.unpack(f"<{payload_octets}Q", payload_bytes)
-
-def convert_to_rosmsg(
-    mavmsg, stamp = None
-) -> Mavlink:
-    """
-    Convert pymavlink message to Mavlink.msg.
-
-    Currently supports both MAVLink v1.0 and v2.0,
-    but without signing.
-    """
-    if stamp is not None:
-        header = Header(stamp=stamp)
-    else:
-        stamp = Time()
-        stamp.sec, stamp.nanosec = rclpy.clock.Clock().now().seconds_nanoseconds()
-        header = Header(stamp=stamp)
-
-    if mavutil.mavlink20():
-        # XXX Need some api to retreive signature block.
-        if mavmsg.get_signed():
-            raise ValueError("Signed message can't be converted to rosmsg.")       
-                 
-        hdr = mavmsg.get_header()
-        return Mavlink(
-            header=header,
-            framing_status=Mavlink.FRAMING_OK,
-            magic=Mavlink.MAVLINK_V20,
-            len=hdr.mlen,
-            incompat_flags=hdr.incompat_flags,
-            compat_flags=hdr.compat_flags,
-            sysid=hdr.srcSystem,            
-            compid=hdr.srcComponent,
-            msgid=hdr.msgId,
-            checksum=mavmsg.get_crc(),
-            payload64=convert_to_payload64(mavmsg.get_payload()),
-            signature=[],  # FIXME #569
-        )
-
-    else:
-        return Mavlink(
-            header=header,
-            framing_status=Mavlink.FRAMING_OK,
-            magic=Mavlink.MAVLINK_V10,
-            len=len(mavmsg.get_payload()),
-            seq=mavmsg.get_seq(),
-            sysid=mavmsg.get_srcSystem(),
-            compid=mavmsg.get_srcComponent(),
-            msgid=mavmsg.get_msgId(),
-            checksum=mavmsg.get_crc(),
-            payload64=convert_to_payload64(mavmsg.get_payload()),
-        )
-
-def convert_to_bytes(msg: Mavlink) -> bytearray:
-    """
-    Re-builds the MAVLink byte stream from mavros_msgs/Mavlink messages.
-
-    Support both v1.0 and v2.0.
-    """
-    payload_octets = len(msg.payload64)
-    if payload_octets < msg.len / 8:
-        raise ValueError("Specified payload length is bigger than actual payload64")
-
-    if msg.magic == Mavlink.MAVLINK_V10:
-        msg_len = 6 + msg.len  # header + payload length
-        msgdata = bytearray(
-            struct.pack(
-                "<BBBBBB%dQ" % payload_octets,
-                msg.magic,
-                msg.len,
-                msg.seq,
-                msg.sysid,
-                msg.compid,
-                msg.msgid,
-                *msg.payload64,
-            )
-        )
-    else:  # MAVLINK_V20
-        msg_len = 10 + msg.len  # header + payload length
-        msgdata = bytearray(
-            struct.pack(
-                "<BBBBBBBBBB%dQ" % payload_octets,
-                msg.magic,
-                msg.len,
-                msg.incompat_flags,
-                msg.compat_flags,
-                msg.seq,
-                msg.sysid,
-                msg.compid,
-                msg.msgid & 0xFF,
-                (msg.msgid >> 8) & 0xFF,
-                (msg.msgid >> 16) & 0xFF,
-                *msg.payload64,
-            )
-        )
-
-    if payload_octets != msg.len / 8:
-        # message is shorter than payload octets
-        msgdata = msgdata[:msg_len]
-
-    # finalize
-    msgdata += struct.pack("<H", msg.checksum)
-
-    if msg.magic == Mavlink.MAVLINK_V20:
-        msgdata += bytearray(msg.signature)
-
-    return msgdata
+from mavros import mavlink as mavros_mavlink
 
 class GCSDataHanderNode(Node):
-    def __init__(self, ensure_mode_node):
+    def __init__(self):
         super().__init__('GCSDataHandlerNode')
 
         self.target_system = 1
@@ -166,79 +44,37 @@ class GCSDataHanderNode(Node):
             7: 'sand'
         }
 
-        self.ensure_mode_node = ensure_mode_node
-
         self.mavlink_sub = self.create_subscription(Mavlink, '/uas1/mavlink_source',self.gcs_data_handler,QoSProfile(
             reliability=QoSReliabilityPolicy.BEST_EFFORT,
             depth=10
             ))
-        self.heartbeat_sub = self.create_subscription(Heartbeat, '/state/heartbeat',self.heartbeat_monitor,10)
-
+        
         self.mavlink_pub = self.create_publisher(Mavlink, '/uas1/mavlink_sink', 10)
-        self.v60_mission_pub = self.create_publisher(String, '/mm/run_mission', 10)
-        self.v60_twist_pub = self.create_publisher(Twist, '/mcu/command/manual_twist', 10)
+        #self.v60_mission_pub = self.create_publisher(String, '/mm/run_mission', 10)
+        #self.v60_twist_pub = self.create_publisher(Twist, '/mcu/command/manual_twist', 10)
 
-        self.v60_missionfile_pub = self.create_publisher(String, '/keti_gcs/mission',10)
         #self.v60_vision_mode_pub = self.create_publisher(UInt32, '/command/setVisionMode',10)
         
         #self.v60_move_mode_pub = {}
         #for idx in move_mode_topic:
         #    self.v60_move_mode_pub[idx] = self.create_publisher(UInt32, move_mode_topic[idx],10)
 
-    def heartbeat_monitor(self, heartbeat: Heartbeat):
-        self.control_mode = heartbeat.control_mode    
-        self.si_units = heartbeat.si_units
     
     def gcs_data_handler(self, mavros_data: Mavlink):
         mavlink = mav.MAVLink(None,self.target_system,self.target_component)
-        mavlink_message = mavlink.parse_char(convert_to_bytes(mavros_data))
+        mavlink_message = mavlink.parse_char(mavros_mavlink.convert_to_bytes(mavros_data))
         
         mavlink_message_dict = mavlink_message.to_dict()
         id = mavlink_message.id
         print(mavlink_message_dict)
         
-        if id == mav.MAVLINK_MSG_ID_COMMAND_LONG:
-            command = mavlink_message_dict['command']
-
-            if command == mav.MAV_CMD_DO_SET_MODE:
-                action = int(mavlink_message_dict['param2'])
-
-                if action >= 0 and action <= 2:
-                    # change control mode
-                    self.ensure_mode_node.ensure_mode('control_mode', 140)
-                
-                    # change action
-                    self.ensure_mode_node.ensure_mode('action',action)
-                
-                    # recovery control mode
-                    self.ensure_mode_node.ensure_mode("control_mode", 180)
-            elif command == mav.MAV_CMD_USER_1:
-                mode = int(mavlink_message_dict['param1'])
-                # change control mode
-                self.ensure_mode_node.ensure_mode('control_mode', mode)
-            elif command == mav.MAV_CMD_USER_2:
-                mode = int(mavlink_message_dict['param1'])
-                value = int(mavlink_message_dict['param2'])
-                #data = UInt32()
-                #data.data = value
-
-                # change control mode
-                self.ensure_mode_node.ensure_mode('control_mode', 140)
-                self.ensure_mode_node.ensure_mode(self.v60_move_mode[mode], value)
-                #self.v60_move_mode_pub[mode].publish(data)
-                #time.sleep(0.5)
-                #self.ensure_mode_node.ensure_mode('control_mode', 180)
-            elif command == mav.MAV_CMD_USER_3:
-                mode = int(mavlink_message_dict['param1'])
-                #data = UInt32()
-                #data.data = mode
-                self.ensure_mode_node.ensure_mode('control_mode', 140)
-                self.ensure_mode_node.ensure_mode('vision_mode', mode)
-                #self.v60_vision_mode_pub.publish(data)     
-                #time.sleep(0.5)
-                #self.ensure_mode_node.ensure_mode('control_mode', 180)
-
-        elif id == mav.MAVLINK_MSG_ID_MISSION_CLEAR_ALL:  
+        if id == mav.MAVLINK_MSG_ID_SET_POSITION_TARGET_GLOBAL_INT: 
+            lat = float(mavlink_message_dict['lat_int'])/10000000
+            lon = float(mavlink_message_dict['lon_int'])/10000000
+            
+            # publish GPS_POSITION
+        
+        '''if id == mav.MAVLINK_MSG_ID_MISSION_CLEAR_ALL:  
             # publish MISSION_ACK
             mavlink = mav.MAVLink(None,self.target_system,self.target_component)
             # mission_ack_encode(self, target_system: int, target_component: int, type: int, mission_type: int = 0)
@@ -401,28 +237,12 @@ class GCSDataHanderNode(Node):
                 if mavlink_message_dict['chan6_raw'] > 1800:
                     self.ensure_mode_node.ensure_mode('control_mode', 170)
                     self.control_mode = 170
-
-class EnsureModeNode(Node):
-    def __init__(self):
-        super().__init__('EnsureModeNode')            
-        self.ensure_mode_srv = self.create_client(EnsureMode, 'ensure_mode')
-        while not self.ensure_mode_srv.wait_for_service(timeout_sec=2.0):
-            print('service not available, waiting again...')
-        self.ensure_mode_req = EnsureMode.Request()
-            
-    def ensure_mode(self, field_name, valdes):
-        self.ensure_mode_req.field = field_name
-        self.ensure_mode_req.valdes = valdes
-        future = self.ensure_mode_srv.call_async(self.ensure_mode_req)
-        rclpy.spin_until_future_complete(self, future)
-        response = future.result()
-        print(response.result_str)
+                    '''
 
 def main(args=None):
     print('hello!')
     rclpy.init(args=None)
-    ensure_mode_node = EnsureModeNode()    
-    node = GCSDataHanderNode(ensure_mode_node)    
+    node = GCSDataHanderNode()    
     rclpy.spin(node)
     rclpy.shutdown()
 

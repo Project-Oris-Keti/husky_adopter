@@ -1,6 +1,0 @@
-string field
-uint32 valdes
----
-bool result
-string result_str
-uint32 val

@@ -1,6 +1,6 @@
 from setuptools import setup
 
-package_name = 'v60_adopter'
+package_name = 'husky_adopter'
 
 setup(
     name=package_name,
@@ -20,8 +20,8 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'v60datahandlernode = v60_adopter.v60datahandlernode:main',
-            'gcsdatahandlernode = v60_adopter.gcsdatahandlernode:main',
+            'huskydatahandlernode = husky_adopter.huskydatahandlernode:main',
+            'gcsdatahandlernode = husky_adopter.gcsdatahandlernode:main',
         ],
     },
 )
