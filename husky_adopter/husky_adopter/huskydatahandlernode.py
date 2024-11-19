@@ -51,15 +51,15 @@ class HuskyDataHanderNode(Node):
         self.target_component = 1
         
         self.gps_sub = message_filters.Subscriber(self, NavSatFix, '/gnss')
-        self.gps_sub.registerCallback(self.send_global_position_int)
+        #self.gps_sub.registerCallback(self.send_global_position_int)
         self.imu_sub = message_filters.Subscriber(self, Imu, '/imu/data')
-        self.imu_sub.registerCallback(self.send_attitude_and_heartbeat)
-        '''self.ts = message_filters.ApproximateTimeSynchronizer(
+        #self.imu_sub.registerCallback(self.send_attitude_and_heartbeat)
+        self.ts = message_filters.ApproximateTimeSynchronizer(
             [self.gps_sub, self.imu_sub],
             10,
             0.04,  # defines the delay (in seconds) with which messages can be synchronized
         )
-        self.ts.registerCallback(self.send_global_position_int)        '''
+        self.ts.registerCallback(self.send_global_position_int)        
         
         self.pub = self.create_publisher(Mavlink, '/uas1/mavlink_sink', 10)
         
@@ -86,18 +86,20 @@ class HuskyDataHanderNode(Node):
         # publish HEARTBEAT
         mavlink = mav.MAVLink(None,self.target_system,self.target_component)
         # heartbeat_encode(self, type: int, autopilot: int, base_mode: int, custom_mode: int, system_status: int, mavlink_version: int = 3)        
-        mav_msg = mavlink.heartbeat_encode(MAV_TYPE_WHEELROBOT, MAV_AUTOPILOT_HUSKY, 0, 0, 0)
+        mav_msg = mavlink.heartbeat_encode(MAV_TYPE_WHEELROBOT, MAV_AUTOPILOT_HUSKY, 0x80, 0, 0)
         mav_msg.pack(mavlink)
         ros_msg = mavros_mavlink.convert_to_rosmsg(mav_msg)
         
         self.pub.publish(ros_msg)
 
-    def send_global_position_int(self, gps:NavSatFix):
+    def send_global_position_int(self, gps:NavSatFix, imu:Imu):
         #print(rclpy.time.Time.from_msg(gps.header.stamp), rclpy.clock.ROSClock().now())
         time_boot_ms = 1000
         #with open('/proc/uptime','r') as uptime:    
             #time_boot_ms = int(float(uptime.readline().split()[0]) * 1000)
             
+        self.send_attitude_and_heartbeat(imu)
+
         lat = int(gps.latitude * 10000000)
         lon = int(gps.longitude * 10000000)
         alt = int(gps.altitude * 1000)
@@ -105,7 +107,7 @@ class HuskyDataHanderNode(Node):
         #lon = int(-105.00999763311616 * 10000000)
         #alt = int(1000 * 1000)
         
-        print(lat, lon, alt)
+        #print(lat, lon, alt)
 
         relative_alt = 0
         vx = 0
