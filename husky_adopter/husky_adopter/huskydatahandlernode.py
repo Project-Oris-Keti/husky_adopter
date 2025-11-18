@@ -23,6 +23,8 @@ from tf2_ros import TransformListener, Buffer
 from geometry_msgs.msg import PoseStamped
 import tf2_geometry_msgs
 
+from rclpy.qos import QoSProfile, ReliabilityPolicy
+
 MAV_TYPE_WHEELROBOT = 101
 MAV_AUTOPILOT_HUSKY = 101
 
@@ -59,10 +61,13 @@ class HuskyDataHanderNode(Node):
         
         self.target_system = 1
         self.target_component = 1
+
+        qos_profile = QoSProfile(depth=10)
+        qos_profile.reliability = ReliabilityPolicy.BEST_EFFORT
         
         self.gps_sub = message_filters.Subscriber(self, NavSatFix, '/gnss')
-        #self.gps_sub.registerCallback(self.send_global_position_int)
-        self.imu_sub = message_filters.Subscriber(self, Imu, '/imu/data')
+        self.gps_sub.registerCallback(self.send_global_position_int_only_gps)
+        self.imu_sub = message_filters.Subscriber(self, Imu, '/imu/data', qos_profile=qos_profile)
         #self.imu_sub.registerCallback(self.send_attitude_and_heartbeat)
         self.ts = message_filters.ApproximateTimeSynchronizer(
             [self.gps_sub, self.imu_sub],
@@ -87,6 +92,15 @@ class HuskyDataHanderNode(Node):
         
         # 주기적으로 tf 확인
         self.timer = self.create_timer(0.1, self.update_tf_pose)
+
+        clock = self.get_clock()
+        clock.create_jump_callback(
+            threshold=rclpy.clock.JumpThreshold(
+                on_clock_change=True, min_backward=None, min_forward=None
+            ),
+            pre_callback=None,
+            post_callback=lambda j: reset_state()
+        )
         
     def send_attitude_and_heartbeat(self, imu:Imu):
         time_boot_ms = 1000
@@ -95,7 +109,7 @@ class HuskyDataHanderNode(Node):
             
         roll_x, pitch_y, yaw_z = euler_from_quaternion(imu.orientation.x, imu.orientation.y, imu.orientation.z, imu.orientation.w)        
         #print(yaw_z) 
-        yaw_z = (-yaw_z + math.pi * 0.5) % (math.pi * 2)
+        yaw_z = (-yaw_z + math.pi * 0.1) % (math.pi * 2)
         #yaw_z = self.compass
         #print(yaw_z)
 
@@ -116,6 +130,31 @@ class HuskyDataHanderNode(Node):
         ros_msg = mavros_mavlink.convert_to_rosmsg(mav_msg)
         
         self.pub.publish(ros_msg)
+
+    def send_global_position_int_only_gps(self, gps:NavSatFix):
+        time_boot_ms = 1000
+        lat = int(gps.latitude * 10000000)
+        lon = int(gps.longitude * 10000000)
+        alt = int(gps.altitude * 1000)
+        #lat = int(39.74777264724913 * 10000000)
+        #lon = int(-105.00999763311616 * 10000000)
+        #alt = int(1000 * 1000)
+        
+        #print(lat, lon, alt)
+
+        relative_alt = 0
+        vx = 0
+        vy = 0
+        vz = 0
+        
+        # publish GLOBAL_POSITION_INT
+        mavlink = mav.MAVLink(None,self.target_system,self.target_component)        
+        # global_position_int_encode(self, time_boot_ms: int, lat: int, lon: int, alt: int, relative_alt: int, vx: int, vy: int, vz: int, hdg: int)
+        mav_msg = mavlink.global_position_int_encode(time_boot_ms, lat, lon, alt, relative_alt, vx, vy, vz, 0)
+        mav_msg.pack(mavlink)
+        ros_msg = mavros_mavlink.convert_to_rosmsg(mav_msg)
+        
+        self.pub.publish(ros_msg)        
 
     def send_global_position_int(self, gps:NavSatFix, imu:Imu):
         #print(rclpy.time.Time.from_msg(gps.header.stamp), rclpy.clock.ROSClock().now())
@@ -156,8 +195,6 @@ class HuskyDataHanderNode(Node):
         
         if position is None:
             return
-        
-        print(position)
         
         time_boot_ms = 1000
         
