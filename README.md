@@ -3,7 +3,7 @@
 
 ## 개요
 
-`husky_adopter`는 ROS 2 패키지로, Clearpath의 Husky 플랫폼에 대해 MAVLInk 프로토콜 기반 웹 관제를 위한 어댑터 기능을 포함하는 패키지지
+`husky_adopter`는 ROS 2 패키지로, Clearpath의 Husky 플랫폼에 대해 MAVLInk 프로토콜 기반 웹 관제를 위한 어댑터 기능을 포함하는 패키지
 
 ## 주요 기능
 
@@ -60,6 +60,9 @@ rosdep install --from-paths src --ignore-src -r -y
 ros2 run husky_adopter huskydatahandlernode &
 ros2 run husky_adopter gcsdatahandlernode &
 ```
+
+## 테스트 완료 환경
+- ROS2 Humble 
 
 ## 기여 방법
 
