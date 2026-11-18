@@ -94,14 +94,35 @@ class HuskyDataHanderNode(Node):
         self.timer = self.create_timer(0.1, self.update_tf_pose)
 
         clock = self.get_clock()
-        clock.create_jump_callback(
+        # keep the handle: rclpy unregisters the callback when it is garbage collected
+        self._clock_jump_handle = clock.create_jump_callback(
             threshold=rclpy.clock.JumpThreshold(
                 on_clock_change=True, min_backward=None, min_forward=None
             ),
             pre_callback=None,
-            post_callback=lambda j: reset_state()
+            post_callback=self.on_clock_jump
         )
-        
+
+    def on_clock_jump(self, jump):
+        """Drop time-dependent state when the ROS clock source changes.
+
+        Fires when the clock type changes at runtime (e.g. use_sim_time is
+        toggled). Previously this callback called an undefined reset_state(),
+        which raised NameError.
+        """
+        self.get_logger().warning('ROS clock changed; clearing GPS/IMU sync queues and TF buffer')
+        lock = getattr(self.ts, 'lock', None)
+        queues = getattr(self.ts, 'queues', [])
+        if lock is not None:
+            with lock:
+                for queue in queues:
+                    queue.clear()
+        else:
+            for queue in queues:
+                queue.clear()
+        self.tf_buffer.clear()
+        self.map_pose = None
+
     def send_attitude_and_heartbeat(self, imu:Imu):
         time_boot_ms = 1000
         #with open('/proc/uptime','r') as uptime:    
