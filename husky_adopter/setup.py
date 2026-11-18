@@ -13,10 +13,10 @@ setup(
     ],
     install_requires=['setuptools'],
     zip_safe=True,
-    maintainer='root',
-    maintainer_email='root@todo.todo',
-    description='TODO: Package description',
-    license='TODO: License declaration',
+    maintainer='Project-Oris-Keti',
+    maintainer_email='sjlee88@keti.re.kr',
+    description='ROS 2 adapter that bridges Clearpath Husky sensor/odometry data and a MAVLink-based web GCS',
+    license='MIT',
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
