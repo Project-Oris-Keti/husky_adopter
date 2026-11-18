@@ -3,7 +3,7 @@
 
 ## 개요
 
-`husky_adopter`는 ROS 2 패키지로, Clearpath의 Husky 플랫폼에 대해 MAVLInk 프로토콜 기반 웹 관제를 위한 어댑터 기능을 포함하는 패키지
+`husky_adopter`는 ROS 2 패키지로, Clearpath의 Husky 플랫폼에 대해 MAVLink 프로토콜 기반 웹 관제를 위한 어댑터 기능을 포함하는 패키지
 
 ## 주요 기능
 
@@ -47,6 +47,10 @@ husky_adopter-master/
 - `sensor_msgs`
 - `mavros_msgs`
 - `builtin_interfaces`
+- `geometry_msgs`, `nav_msgs`, `message_filters`, `tf2_ros_py`, `tf2_geometry_msgs`, `mavros`
+
+Python 패키지 `pymavlink` 도 필요합니다(`pip install pymavlink`). 노드는 pymavlink 의 `common` 방언을 씁니다.
+pymavlink 2.4.49 부터 `standard` 방언에 미션·자세·위치 메시지가 빠졌기 때문입니다(2.4.48, 2.4.50 에서 확인).
 
 누락된 의존성은 `rosdep`을 사용해 설치할 수 있습니다:
 ```bash
@@ -72,3 +76,11 @@ ros2 run husky_adopter gcsdatahandlernode &
    git checkout -b feature/your-feature
    ```
 3. Pull Request를 제출합니다.
+
+## 라이선스
+
+[MIT](LICENSE)
+
+## 변경 이력
+
+[CHANGELOG.md](CHANGELOG.md) 를 보세요.
