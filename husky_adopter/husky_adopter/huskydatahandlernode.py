@@ -3,7 +3,9 @@ import message_filters
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Imu, NavSatFix
-import pymavlink.dialects.v20.standard as mav
+# "common" (not "standard"): since pymavlink 2.4.49 the standard dialect no
+# longer contains ATTITUDE / GLOBAL_POSITION_INT / ODOMETRY.
+import pymavlink.dialects.v20.common as mav
 from mavros_msgs.msg import Mavlink
 import math
 
