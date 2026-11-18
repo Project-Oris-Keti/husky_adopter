@@ -48,10 +48,35 @@ class GCSDataHanderNode(Node):
             depth=10
             ))
 
+    def send_mission_request(self, seq):
+        # publish MISSION_REQUEST, not MISSION_REQUEST_INT
+        mavlink = mav.MAVLink(None, self.target_system, self.target_component)
+        mav_msg = mavlink.mission_request_encode(self.target_system, self.target_component, seq, mav.MAV_MISSION_TYPE_MISSION)
+        mav_msg.pack(mavlink)
+        self.mavlink_pub.publish(mavros_mavlink.convert_to_rosmsg(mav_msg))
+
+    def send_mission_ack(self):
+        mavlink = mav.MAVLink(None, self.target_system, self.target_component)
+        mav_msg = mavlink.mission_ack_encode(self.target_system, self.target_component, mav.MAV_MISSION_ACCEPTED, mav.MAV_MISSION_TYPE_MISSION)
+        mav_msg.pack(mavlink)
+        self.mavlink_pub.publish(mavros_mavlink.convert_to_rosmsg(mav_msg))
+
+    def reset_mission_upload(self):
+        self.mission_count = 0
+        self.cur_mission_index = 0
+        self.waypoint.clear()
+
     def gcs_data_handler(self, mavros_data: Mavlink):
         mavlink = mav.MAVLink(None,self.target_system,self.target_component)
-        mavlink_message = mavlink.parse_char(mavros_mavlink.convert_to_bytes(mavros_data))
-        
+        try:
+            mavlink_message = mavlink.parse_char(mavros_mavlink.convert_to_bytes(mavros_data))
+        except mav.MAVError as e:
+            self.get_logger().warning(f'Dropping invalid MAVLink frame: {e}')
+            return
+        if mavlink_message is None:
+            # incomplete frame: nothing to handle (CRC errors raise MAVError above)
+            return
+
         mavlink_message_dict = mavlink_message.to_dict()
         id = mavlink_message.id
         print(mavlink_message_dict, id, mav.MAVLINK_MSG_ID_SET_POSITION_TARGET_GLOBAL_INT)
@@ -114,81 +139,61 @@ class GCSDataHanderNode(Node):
             #print(forward_normalized, side_normalized, yaw_normalized)
             self.husky_twist_pub.publish(Twist(linear=Vector3(x=forward_normalized, y=side_normalized), angular=Vector3(z=yaw_normalized)))
 
-        elif id == mav.MAVLINK_MSG_ID_MISSION_CLEAR_ALL:  
-            # publish MISSION_ACK
-            mavlink = mav.MAVLink(None,self.target_system,self.target_component)
-            # mission_ack_encode(self, target_system: int, target_component: int, type: int, mission_type: int = 0)
-            mav_msg = mavlink. mission_ack_encode(self.target_system, self.target_component, mav.MAV_MISSION_ACCEPTED, mav.MAV_MISSION_TYPE_MISSION)
-            mav_msg.pack(mavlink)
-            self.mission_count = 0
-            ros_msg = mavros_mavlink.convert_to_rosmsg(mav_msg)
-            self.mavlink_pub.publish(ros_msg)
+        elif id == mav.MAVLINK_MSG_ID_MISSION_CLEAR_ALL:
+            # drop any partially uploaded mission, then acknowledge
+            self.reset_mission_upload()
+            self.send_mission_ack()
 
         elif id == mav.MAVLINK_MSG_ID_MISSION_COUNT:
+            # A new MISSION_COUNT always (re)starts the upload. Previously a
+            # COUNT was ignored while an upload was in progress, so one aborted
+            # upload blocked every later upload until the node restarted.
+            self.reset_mission_upload()
+            self.mission_type = mavlink_message_dict['mission_type']
+            count = int(mavlink_message_dict['count'])
+            if count <= 0:
+                self.send_mission_ack()
+            else:
+                self.mission_count = count
+                self.send_mission_request(self.cur_mission_index)
+
+        elif id == mav.MAVLINK_MSG_ID_MISSION_ITEM_INT:
             if self.mission_count == 0:
-                self.mission_count = mavlink_message_dict['count']
-                self.cur_mission_index = 0
-                self.mission_type = mavlink_message_dict['mission_type']
-                
-                # publish MISSION_REQUEST, not MISSION_REQUEST_INT
-                mavlink = mav.MAVLink(None,self.target_system,self.target_component)
-                # mission_request_int_encode(self, target_system: int, target_component: int, seq: int, mission_type: int = 0)
-                #mav_msg = mavlink. mission_request_int_encode(self.target_system, self.target_component, self.seq, mav.MAV_MISSION_TYPE_MISSION)
-                mav_msg = mavlink. mission_request_encode(self.target_system, self.target_component, self.cur_mission_index, mav.MAV_MISSION_TYPE_MISSION)
-                mav_msg.pack(mavlink)
-                ros_msg = mavros_mavlink.convert_to_rosmsg(mav_msg)
-                
-                print('ok')
-                self.mavlink_pub.publish(ros_msg)
-                
-        elif id == mav.MAVLINK_MSG_ID_MISSION_ITEM_INT:            
+                return  # no upload in progress
+
             seq = mavlink_message_dict['seq']
-            frame = mavlink_message_dict['frame']
             command = mavlink_message_dict['command']
-            
+
+            if seq != self.cur_mission_index:
+                # duplicate or out-of-order item: ask again for the expected one
+                self.send_mission_request(self.cur_mission_index)
+                return
+
             if command == mav.MAV_CMD_NAV_WAYPOINT:
                 lat = float(mavlink_message_dict['x'])/10000000
                 lon = float(mavlink_message_dict['y'])/10000000
-                alt = mavlink_message_dict['z']
                 self.waypoint.append(Pose(position=Point(x=lat, y=lon)))
-                
-                self.cur_mission_index += 1
-                
-                if self.cur_mission_index < self.mission_count and self.mission_count > 0:                
+            # Non-waypoint items are skipped but still advance the sequence;
+            # previously they stalled the upload at that item.
+            self.cur_mission_index += 1
 
-                    # publish MISSION_REQUEST_INT
-                    mavlink = mav.MAVLink(None,self.target_system,self.target_component)
-                    # mission_request_int_encode(self, target_system: int, target_component: int, seq: int, mission_type: int = 0)
-                    mav_msg = mavlink. mission_request_encode(self.target_system, self.target_component, self.cur_mission_index, mav.MAV_MISSION_TYPE_MISSION)
-                    mav_msg.pack(mavlink)
-                    ros_msg = mavros_mavlink.convert_to_rosmsg(mav_msg)
-                    
-                    self.mavlink_pub.publish(ros_msg)
-                else:
-                    # publish MISSION_ACK
-                    mavlink = mav.MAVLink(None,self.target_system,self.target_component)
-                    # mission_ack_encode(self, target_system: int, target_component: int, type: int, mission_type: int = 0)
-                    mav_msg = mavlink. mission_ack_encode(self.target_system, self.target_component, mav.MAV_MISSION_ACCEPTED, mav.MAV_MISSION_TYPE_MISSION)
-                    mav_msg.pack(mavlink)
-                    ros_msg = mavros_mavlink.convert_to_rosmsg(mav_msg)
-                    
-                    self.mavlink_pub.publish(ros_msg)
+            if self.cur_mission_index < self.mission_count:
+                self.send_mission_request(self.cur_mission_index)
+            else:
+                self.send_mission_ack()
 
-                    # execute mission         
-                    poseArr = PoseArray(poses=self.waypoint)
-
+                # execute mission (a mission without NAV_WAYPOINT items moves nothing)
+                if self.waypoint:
+                    poseArr = PoseArray(poses=list(self.waypoint))
                     print(poseArr)
-
                     self.husky_move_pub.publish(poseArr)
-                    
-                    #clear variables                    
-                    self.mission_count = 0
-                    self.cur_mission_index = 0                    
-                    self.waypoint.clear()
+
+                self.reset_mission_upload()
+
 
 def main(args=None):
     print('hello!')
-    rclpy.init(args=None)
+    rclpy.init(args=args)
     node = GCSDataHanderNode()    
     rclpy.spin(node)
     rclpy.shutdown()
